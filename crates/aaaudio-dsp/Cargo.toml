@@ -1,0 +1,12 @@
+[package]
+name = "aaaudio-dsp"
+description = "Zero-allocation, lock-free real-time DSP engine for AAAudio (10-band Parametric EQ, Voice Chain, and Mixing Matrix)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rtrb.workspace = true
+serde.workspace = true

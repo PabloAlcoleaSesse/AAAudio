@@ -1,0 +1,17 @@
+[package]
+name = "aaaudio-router"
+description = "Cross-platform virtual audio routing & lock-free Host Control orchestrator for AAAudio"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aaaudio-dsp = { path = "../aaaudio-dsp" }
+rtrb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+cpal.workspace = true
+thiserror.workspace = true
+log.workspace = true

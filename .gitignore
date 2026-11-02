@@ -1,0 +1,16 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Node / UI
+/ui/node_modules/
+/ui/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS & Editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
