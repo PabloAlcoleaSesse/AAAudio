@@ -4,6 +4,7 @@ members = [
     "crates/aaaudio-dsp",
     "crates/aaaudio-router",
     "crates/aaaudio-daemon",
+    "src-tauri",
 ]
 
 [workspace.package]

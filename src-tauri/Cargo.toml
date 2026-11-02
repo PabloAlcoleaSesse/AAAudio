@@ -1,0 +1,22 @@
+[package]
+name = "aaaudio-desktop"
+description = "Native Tauri v2 desktop application for AAAudio"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "aaaudio-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+aaaudio-dsp = { path = "../crates/aaaudio-dsp" }
+aaaudio-router = { path = "../crates/aaaudio-router" }
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true

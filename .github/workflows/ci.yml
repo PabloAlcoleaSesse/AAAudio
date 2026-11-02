@@ -27,9 +27,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -p aaaudio-dsp -p aaaudio-router -p aaaudio-daemon --all-targets -- -D warnings
       - name: Run Unit Tests
-        run: cargo test --workspace
+        run: cargo test -p aaaudio-dsp -p aaaudio-router -p aaaudio-daemon
 
   frontend-ui:
     name: Frontend Canvas EQ & Console UI

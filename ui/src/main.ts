@@ -1,4 +1,5 @@
 import './style.css';
+import { invoke } from '@tauri-apps/api/core';
 import { EqBandNode, FilterType, ParametricEqCanvas } from './dsp/ParametricEqCanvas';
 
 type ChannelKey = 'master' | 'game' | 'chat' | 'media' | 'aux' | 'mic';
@@ -12,6 +13,31 @@ interface ChannelState {
   pan: number;
   meterDb: number;
   bands: EqBandNode[];
+}
+
+interface MeterFrame {
+  peak_l: number;
+  peak_r: number;
+  rms_l: number;
+  rms_r: number;
+  gain_reduction_db: number;
+  gate_open: number;
+}
+
+interface MixerTelemetryFrame {
+  timestamp_ms: number;
+  meters: Record<ChannelKey, MeterFrame>;
+}
+
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
+  if (!isTauri) return null;
+  try {
+    return await invoke<T>(cmd, args);
+  } catch {
+    return null;
+  }
 }
 
 const BAND_COLORS = [
@@ -108,7 +134,7 @@ let selectedChannelIdx = 1; // Default to Game channel strip
 let chatMixBalance = 0.0;
 let gateThresholdDb = -42.0;
 let compThresholdDb = -18.0;
-let compRatio = 4.0;
+const compRatio = 4.0;
 let sidetoneDb = -6.0;
 let sidetoneEnabled = true;
 
@@ -122,7 +148,7 @@ app.innerHTML = `
         <h1>Ultra-Lean Real-Time Software Audio Mixer & Router</h1>
       </div>
       <div class="telemetry-pills">
-        <span class="pill">Quantum: <strong>128 frames @ 48 kHz (5.33 ms)</strong></span>
+        <span class="pill" id="device-pill">Quantum: <strong>128 frames @ 48 kHz (5.33 ms)</strong></span>
         <span class="pill">Sync: <strong>rtrb Lock-Free SPSC</strong></span>
         <span class="pill">Audio Thread: <strong>0 Allocs / FTZ+DAZ</strong></span>
       </div>
@@ -193,8 +219,23 @@ const activeNodeReadout = document.getElementById('active-node-readout')!;
 const bandTypeSelect = document.getElementById('band-type-select') as HTMLSelectElement;
 const eqCanvasEl = document.getElementById('eq-canvas') as HTMLCanvasElement;
 
+function syncBandToBackend(channelId: ChannelKey, band: EqBandNode): void {
+  void safeInvoke('update_eq_band', {
+    channel: channelId,
+    band: {
+      band_idx: band.id,
+      enabled: band.enabled,
+      filter_type: band.type,
+      freq_hz: band.freqHz,
+      q: band.q,
+      gain_db: band.gainDb,
+    },
+  });
+}
+
 function updateNodeReadout(band: EqBandNode): void {
-  const fStr = band.freqHz >= 1000 ? `${(band.freqHz / 1000).toFixed(2)} kHz` : `${band.freqHz.toFixed(0)} Hz`;
+  const fStr =
+    band.freqHz >= 1000 ? `${(band.freqHz / 1000).toFixed(2)} kHz` : `${band.freqHz.toFixed(0)} Hz`;
   const gStr = `${band.gainDb >= 0 ? '+' : ''}${band.gainDb.toFixed(1)} dB`;
   activeNodeReadout.textContent = `Band ${band.id + 1}: ${fStr} | ${gStr} | Q ${band.q.toFixed(2)}`;
   bandTypeSelect.value = band.type;
@@ -206,6 +247,7 @@ const eqGraph = new ParametricEqCanvas(
   48000,
   (updatedBand) => {
     updateNodeReadout(updatedBand);
+    syncBandToBackend(channels[selectedChannelIdx].id, updatedBand);
   }
 );
 
@@ -216,7 +258,8 @@ function renderStrips(): void {
     const stripEl = document.createElement('div');
     stripEl.className = `channel-strip ${idx === selectedChannelIdx ? 'selected' : ''}`;
 
-    const dbText = ch.faderDb <= -59.5 ? '-∞ dB' : `${ch.faderDb >= 0 ? '+' : ''}${ch.faderDb.toFixed(1)} dB`;
+    const dbText =
+      ch.faderDb <= -59.5 ? '-∞ dB' : `${ch.faderDb >= 0 ? '+' : ''}${ch.faderDb.toFixed(1)} dB`;
 
     stripEl.innerHTML = `
       <div class="strip-title">${ch.label}</div>
@@ -257,14 +300,21 @@ function renderStrips(): void {
       const readout = document.getElementById(`fader-readout-${ch.id}`)!;
       readout.textContent =
         ch.faderDb <= -59.5 ? '-∞ dB' : `${ch.faderDb >= 0 ? '+' : ''}${ch.faderDb.toFixed(1)} dB`;
+      void safeInvoke('set_channel_fader', { channel: ch.id, faderDb: ch.faderDb });
     });
 
     stripEl.querySelectorAll<HTMLButtonElement>('button.btn-mini').forEach((btn) => {
       btn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const action = btn.dataset.action;
-        if (action === 'mute') ch.muted = !ch.muted;
-        if (action === 'solo') ch.solo = !ch.solo;
+        if (action === 'mute') {
+          ch.muted = !ch.muted;
+          void safeInvoke('set_channel_mute', { channel: ch.id, muted: ch.muted });
+        }
+        if (action === 'solo') {
+          ch.solo = !ch.solo;
+          void safeInvoke('set_channel_solo', { channel: ch.id, solo: ch.solo });
+        }
         renderStrips();
       });
     });
@@ -279,6 +329,7 @@ bandTypeSelect.addEventListener('change', () => {
   ch.bands[bIdx].type = bandTypeSelect.value as FilterType;
   eqGraph.render();
   updateNodeReadout(ch.bands[bIdx]);
+  syncBandToBackend(ch.id, ch.bands[bIdx]);
 });
 
 const chatMixSlider = document.getElementById('chatmix-slider') as HTMLInputElement;
@@ -292,6 +343,7 @@ chatMixSlider.addEventListener('input', () => {
   } else {
     chatMixVal.textContent = `Chat +${Math.round(chatMixBalance * 100)}%`;
   }
+  void safeInvoke('set_chatmix_balance', { balance: chatMixBalance });
 });
 
 const sidetoneSlider = document.getElementById('sidetone-slider') as HTMLInputElement;
@@ -300,6 +352,7 @@ sidetoneSlider.addEventListener('input', () => {
   sidetoneDb = parseFloat(sidetoneSlider.value);
   sidetoneEnabled = sidetoneDb > -35.5;
   sidetoneVal.textContent = sidetoneEnabled ? `${sidetoneDb.toFixed(1)} dB` : 'Muted';
+  void safeInvoke('set_sidetone', { enabled: sidetoneEnabled, gainDb: sidetoneDb });
 });
 
 const gateSlider = document.getElementById('gate-slider') as HTMLInputElement;
@@ -307,6 +360,16 @@ const gateVal = document.getElementById('gate-val')!;
 gateSlider.addEventListener('input', () => {
   gateThresholdDb = parseFloat(gateSlider.value);
   gateVal.textContent = `${gateThresholdDb.toFixed(1)} dBFS`;
+  void safeInvoke('set_gate_params', {
+    params: {
+      enabled: true,
+      threshold_db: gateThresholdDb,
+      hysteresis_db: 4.0,
+      attack_ms: 2.0,
+      hold_ms: 80.0,
+      release_ms: 150.0,
+    },
+  });
 });
 
 const compSlider = document.getElementById('comp-slider') as HTMLInputElement;
@@ -314,6 +377,17 @@ const compVal = document.getElementById('comp-val')!;
 compSlider.addEventListener('input', () => {
   compThresholdDb = parseFloat(compSlider.value);
   compVal.textContent = `${compThresholdDb.toFixed(1)} dB (${compRatio}:1)`;
+  void safeInvoke('set_compressor_params', {
+    params: {
+      enabled: true,
+      threshold_db: compThresholdDb,
+      ratio: compRatio,
+      attack_ms: 5.0,
+      release_ms: 80.0,
+      makeup_db: 3.0,
+      knee_width_db: 6.0,
+    },
+  });
 });
 
 window.addEventListener('resize', () => eqGraph.resize());
@@ -321,12 +395,36 @@ window.addEventListener('resize', () => eqGraph.resize());
 renderStrips();
 updateNodeReadout(channels[selectedChannelIdx].bands[0]);
 
-// 60 FPS Ballistic VU Meter Animation Loop
-let t = 0;
-function animateMeters(): void {
-  t += 0.045;
-  const anySolo = channels.some((c) => c.id !== 'master' && c.id !== 'mic' && c.solo);
+function linearToDbfs(lin: number): number {
+  return 20 * Math.log10(Math.max(1e-6, lin));
+}
 
+// 60 FPS Ballistic VU Meter Loop (live Rust SPSC telemetry in Tauri, or local fallback in browser)
+let t = 0;
+async function animateMeters(): Promise<void> {
+  t += 0.045;
+
+  if (isTauri) {
+    const telemetry = await safeInvoke<MixerTelemetryFrame>('poll_mixer_telemetry');
+    if (telemetry && telemetry.meters) {
+      channels.forEach((ch) => {
+        const frame = telemetry.meters[ch.id];
+        if (frame) {
+          const targetDb = linearToDbfs(Math.max(frame.rms_l, frame.rms_r));
+          ch.meterDb = ch.meterDb * 0.65 + targetDb * 0.35;
+        }
+        const bar = document.getElementById(`vu-bar-${ch.id}`);
+        if (bar) {
+          const pct = Math.max(0, Math.min(100, ((ch.meterDb + 60) / 66) * 100));
+          bar.style.height = `${pct}%`;
+        }
+      });
+      requestAnimationFrame(() => void animateMeters());
+      return;
+    }
+  }
+
+  const anySolo = channels.some((c) => c.id !== 'master' && c.id !== 'mic' && c.solo);
   let masterEnergy = 0;
 
   channels.forEach((ch, idx) => {
@@ -337,8 +435,7 @@ function animateMeters(): void {
       ch.meterDb = Math.max(-60, ch.meterDb - 2.8);
     } else {
       const wave =
-        Math.sin(t * (1.7 + idx * 0.6)) * 4.5 +
-        Math.cos(t * (3.1 + idx * 0.9)) * 3.0;
+        Math.sin(t * (1.7 + idx * 0.6)) * 4.5 + Math.cos(t * (3.1 + idx * 0.9)) * 3.0;
       const chatMixOffset =
         ch.id === 'game' && chatMixBalance > 0
           ? -chatMixBalance * 24
@@ -374,7 +471,7 @@ function animateMeters(): void {
     masterBar.style.height = `${pct}%`;
   }
 
-  requestAnimationFrame(animateMeters);
+  requestAnimationFrame(() => void animateMeters());
 }
 
-requestAnimationFrame(animateMeters);
+requestAnimationFrame(() => void animateMeters());

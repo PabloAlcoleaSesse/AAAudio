@@ -19,7 +19,7 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -101,6 +101,7 @@ pub struct MixerController {
     meter_consumers: HashMap<ChannelId, Consumer<MeterFrame>>,
     last_meters: HashMap<ChannelId, MeterFrame>,
     snapshot: MixerSnapshot,
+    chatmix_bits: Arc<AtomicU32>,
     running: Arc<AtomicBool>,
     rt_thread: Option<JoinHandle<()>>,
 }
@@ -165,12 +166,20 @@ impl MixerController {
 
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = Arc::clone(&running);
+        let chatmix_bits = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+        let chatmix_clone = Arc::clone(&chatmix_bits);
 
         // Spawn deterministic RT audio quantum runner (pre-allocates all buffers outside the loop)
         let rt_thread = thread::Builder::new()
             .name("aaaudio-rt-dsp".to_string())
             .spawn(move || {
-                run_realtime_dsp_loop(matrix, sr, quantum_frames as usize, running_clone);
+                run_realtime_dsp_loop(
+                    matrix,
+                    sr,
+                    quantum_frames as usize,
+                    running_clone,
+                    chatmix_clone,
+                );
             })
             .expect("Failed to spawn real-time DSP thread");
 
@@ -181,9 +190,18 @@ impl MixerController {
             meter_consumers,
             last_meters,
             snapshot,
+            chatmix_bits,
             running,
             rt_thread: Some(rt_thread),
         }
+    }
+
+    /// Updates the ChatMix balance (`[-1.0 .. +1.0]`) lock-freely via atomic float bits.
+    pub fn set_chatmix_balance(&mut self, balance: f32) {
+        let clamped = balance.clamp(-1.0, 1.0);
+        self.snapshot.chatmix_balance = clamped;
+        self.chatmix_bits
+            .store(clamped.to_bits(), Ordering::Relaxed);
     }
 
     /// Updates a channel strip's fader in dB (`[-60.0 .. +12.0]`).
@@ -399,6 +417,7 @@ fn run_realtime_dsp_loop(
     sample_rate: f32,
     quantum_frames: usize,
     running: Arc<AtomicBool>,
+    chatmix_bits: Arc<AtomicU32>,
 ) {
     let stereo_len = quantum_frames * 2;
     let mut game_buf = vec![0.0_f32; stereo_len];
@@ -415,6 +434,8 @@ fn run_realtime_dsp_loop(
     let mut next_tick = Instant::now();
 
     while running.load(Ordering::Relaxed) {
+        let balance = f32::from_bits(chatmix_bits.load(Ordering::Relaxed));
+        matrix.set_chatmix_balance(balance);
         // Synthesize realistic multi-band test stems on virtual sinks so metering and EQ
         // respond live out-of-the-box even when no external app is playing into a virtual sink
         for (i, mic_slot) in mic_mono_in.iter_mut().enumerate().take(quantum_frames) {

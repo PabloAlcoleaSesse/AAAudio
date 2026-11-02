@@ -38,6 +38,7 @@ AAAudio/
 │   ├── aaaudio-dsp/            # Real-time zero-allocation DSP crate (EQ, Smoothers, Voice Chain, Matrix)
 │   ├── aaaudio-router/         # Cross-platform virtual routing & Host Control Thread orchestrator
 │   └── aaaudio-daemon/         # CLI & real-time engine runner binary (`aaaudio`)
+├── src-tauri/                  # Native Tauri v2 desktop application (`AAAudio.app` / `.exe` / AppImage)
 ├── ui/                         # Lightweight TypeScript + Vite digital mixing console & Canvas EQ
 │   ├── src/dsp/ParametricEqCanvas.ts
 │   ├── src/main.ts
@@ -60,7 +61,21 @@ cargo test --workspace
 cargo run --bin aaaudio -- --self-test
 ```
 
-### 2. Launch the Interactive Mixing Console & Parametric EQ UI
+### 2. Build or Launch the Native Desktop App (`AAAudio.app` via Tauri v2)
+
+```bash
+cd ui && npm install && cd ..
+
+# Launch in live development mode
+./ui/node_modules/.bin/tauri dev
+
+# Build standalone native application bundle (macOS .app / Windows / Linux)
+./ui/node_modules/.bin/tauri build --bundles app
+```
+
+On macOS, the compiled native app bundle is output to `target/release/bundle/macos/AAAudio.app`.
+
+### 3. Launch the Interactive Mixing Console UI in a Browser (Standalone Mode)
 
 ```bash
 cd ui
